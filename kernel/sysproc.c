@@ -5,7 +5,20 @@
 #include "param.h"
 #include "memlayout.h"
 #include "spinlock.h"
+
+
+//the new one
 #include "proc.h"
+#include "sysinfo.h"   // 让 struct sysinfo 完整可见
+
+uint64 
+sys_trace(void) {
+  int trace_sys_mask;
+  if (argint(0, &trace_sys_mask) < 0)
+    return -1;
+  myproc()->tracemask |= trace_sys_mask;
+  return 0;
+}
 
 uint64
 sys_exit(void)
@@ -95,3 +108,21 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_sysinfo(void) {
+  uint64 uaddr;                 // 用户传入的 struct sysinfo* 指针
+  if (argaddr(0, &uaddr) < 0)
+    return -1;
+
+  struct sysinfo s;             // 现在类型已完整可见，不会再报 storage size 错
+  s.freemem = kfreemem();
+  s.nproc   = count_used_proc(); // ← 名字要和 proc.c 的实现一致
+
+  struct proc *p = myproc();
+  if (copyout(p->pagetable, uaddr, (char *)&s, sizeof(s)) < 0)
+    return -1;
+
+  return 0;
+}
+
