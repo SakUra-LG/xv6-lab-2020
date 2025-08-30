@@ -487,10 +487,20 @@ scheduler(void)
       }
       release(&p->lock);
     }
+<<<<<<< HEAD
+=======
+#if !defined (LAB_FS)
+>>>>>>> upstream/traps
     if(found == 0) {
       intr_on();
       asm volatile("wfi");
     }
+<<<<<<< HEAD
+=======
+#else
+    ;
+#endif
+>>>>>>> upstream/traps
   }
 }
 
