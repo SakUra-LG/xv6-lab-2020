@@ -15,6 +15,10 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"  // lab 10
+
+#define max(a, b) ((a) > (b) ? (a) : (b))   // lab 10
+#define min(a, b) ((a) < (b) ? (a) : (b))   // lab 10
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -283,48 +287,6 @@ create(char *path, short type, short major, short minor)
   return ip;
 }
 
-
-// recursively follow the symlinks - lab9-2
-// Caller must hold ip->lock
-// and when function returned, it holds ip->lock of returned ip
-static struct inode* 
-follow_symlink(struct inode* ip) {
-  uint inums[NSYMLINK];
-  int i, j;
-  char target[MAXPATH];
-
-  for(i = 0; i < NSYMLINK; ++i) {
-    inums[i] = ip->inum;
-    // read the target path from symlink file
-    if(readi(ip, 0, (uint64)target, 0, MAXPATH) <= 0) {
-      iunlockput(ip);
-      printf("open_symlink: open symlink failed\n");
-      return 0;
-    }
-    iunlockput(ip);
-    
-    // get the inode of target path 
-    if((ip = namei(target)) == 0) {
-      printf("open_symlink: path \"%s\" is not exist\n", target);
-      return 0;
-    }
-    for(j = 0; j <= i; ++j) {
-      if(ip->inum == inums[j]) {
-        printf("open_symlink: links form a cycle\n");
-        return 0;
-      }
-    }
-    ilock(ip);
-    if(ip->type != T_SYMLINK) {
-      return ip;
-    }
-  }
-
-  iunlockput(ip);
-  printf("open_symlink: the depth of links reaches the limit\n");
-  return 0;
-}
-
 uint64
 sys_open(void)
 {
@@ -364,16 +326,6 @@ sys_open(void)
     return -1;
   }
 
-  // handle the symlink - lab 9.2
-  if(ip->type == T_SYMLINK && (omode & O_NOFOLLOW) == 0) {
-    if((ip = follow_symlink(ip)) == 0) {
-      // 此处不用调用iunlockput()释放锁
-      // follow_symlinktest()返回失败时,锁在函数内已经被释放
-      end_op();
-      return -1;
-    }
-  }
-
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
       fileclose(f);
@@ -401,36 +353,6 @@ sys_open(void)
   end_op();
 
   return fd;
-}
-
-// Generating symbolic links
-uint64 
-sys_symlink(void) {
-  char target[MAXPATH], path[MAXPATH];
-  struct inode *ip;
-  int n;
-
-  if ((n = argstr(0, target, MAXPATH)) < 0
-    || argstr(1, path, MAXPATH) < 0) {
-    return -1;
-  }
-
-  begin_op();
-  // create the symlink's inode
-  if((ip = create(path, T_SYMLINK, 0, 0)) == 0) {
-    end_op();
-    return -1;
-  }
-  // write the target path to the inode
-  if(writei(ip, 0, (uint64)target, 0, n) != n) {
-    iunlockput(ip);
-    end_op();
-    return -1;
-  }
-
-  iunlockput(ip);
-  end_op();
-  return 0;
 }
 
 uint64
@@ -563,6 +485,147 @@ sys_pipe(void)
     fileclose(rf);
     fileclose(wf);
     return -1;
+  }
+  return 0;
+}
+
+// lab 10 added
+uint64 
+sys_mmap(void) {
+  uint64 addr;
+  int len, prot, flags, offset;
+  struct file *f;
+  struct vm_area *vma = 0;
+  struct proc *p = myproc();
+  int i;
+
+  if (argaddr(0, &addr) < 0 || argint(1, &len) < 0
+      || argint(2, &prot) < 0 || argint(3, &flags) < 0
+      || argfd(4, 0, &f) < 0 || argint(5, &offset) < 0) {
+    return -1;
+  }
+  if (flags != MAP_SHARED && flags != MAP_PRIVATE) {
+    return -1;
+  }
+  // the file must be written when flag is MAP_SHARED
+  if (flags == MAP_SHARED && f->writable == 0 && (prot & PROT_WRITE)) {
+    return -1;
+  }
+  // offset must be a multiple of the page size
+  if (len < 0 || offset < 0 || offset % PGSIZE) {
+    return -1;
+  }
+
+  // allocate a VMA for the mapped memory
+  for (i = 0; i < NVMA; ++i) {
+    if (!p->vma[i].addr) {
+      vma = &p->vma[i];
+      break;
+    }
+  }
+  if (!vma) {
+    return -1;
+  }
+
+  // assume that addr will always be 0, the kernel 
+  //choose the page-aligned address at which to create
+  //the mapping
+  addr = MMAPMINADDR;
+  for (i = 0; i < NVMA; ++i) {
+    if (p->vma[i].addr) {
+      // get the max address of the mapped memory  
+      addr = max(addr, p->vma[i].addr + p->vma[i].len);
+    }
+  }
+  addr = PGROUNDUP(addr);
+  if (addr + len > TRAPFRAME) {
+    return -1;
+  }
+  vma->addr = addr;   
+  vma->len = len;
+  vma->prot = prot;
+  vma->flags = flags;
+  vma->offset = offset;
+  vma->f = f;
+  filedup(f);     // increase the file's reference count
+
+  return addr;
+}
+
+// lab 10 added
+uint64 
+sys_munmap(void) {
+  uint64 addr, va;
+  int len;
+  struct proc *p = myproc();
+  struct vm_area *vma = 0;
+  uint maxsz, n, n1;
+  int i;
+
+  if (argaddr(0, &addr) < 0 || argint(1, &len) < 0) {
+    return -1;
+  }
+  if (addr % PGSIZE || len < 0) {
+    return -1;
+  }
+
+  // find the VMA
+  for (i = 0; i < NVMA; ++i) {
+    if (p->vma[i].addr && addr >= p->vma[i].addr
+        && addr + len <= p->vma[i].addr + p->vma[i].len) {
+      vma = &p->vma[i];
+      break;
+    }
+  }
+  if (!vma) {
+    return -1;
+  }
+
+  if (len == 0) {
+    return 0;
+  }
+
+  if ((vma->flags & MAP_SHARED)) {
+    // the max size once can write to the disk
+    maxsz = ((MAXOPBLOCKS - 1 - 1 - 2) / 2) * BSIZE;
+    for (va = addr; va < addr + len; va += PGSIZE) {
+      if (uvmgetdirty(p->pagetable, va) == 0) {
+        continue;
+      }
+      // only write the dirty page back to the mapped file
+      n = min(PGSIZE, addr + len - va);
+      for (i = 0; i < n; i += n1) {
+        n1 = min(maxsz, n - i);
+        begin_op();
+        ilock(vma->f->ip);
+        if (writei(vma->f->ip, 1, va + i, va - vma->addr + vma->offset + i, n1) != n1) {
+          iunlock(vma->f->ip);
+          end_op();
+          return -1;
+        }
+        iunlock(vma->f->ip);
+        end_op();
+      }
+    }
+  }
+  uvmunmap(p->pagetable, addr, (len - 1) / PGSIZE + 1, 1);
+  // update the vma
+  if (addr == vma->addr && len == vma->len) {
+    vma->addr = 0;
+    vma->len = 0;
+    vma->offset = 0;
+    vma->flags = 0;
+    vma->prot = 0;
+    fileclose(vma->f);
+    vma->f = 0;
+  } else if (addr == vma->addr) {
+    vma->addr += len;
+    vma->offset += len;
+    vma->len -= len;
+  } else if (addr + len == vma->addr + vma->len) {
+    vma->len -= len;
+  } else {
+    panic("unexpected munmap");
   }
   return 0;
 }
