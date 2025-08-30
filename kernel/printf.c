@@ -132,3 +132,19 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+void backtrace(void) {
+    printf("backtrace:\n");
+
+    uint64 curr_fp = r_fp();                // 当前栈帧指针
+    uint64 page_bottom = PGROUNDDOWN(curr_fp); // 栈页底部
+
+    while (page_bottom < curr_fp) {
+        uint64 ret = *(pte_t *)(curr_fp - 0x8);   // 返回地址
+        uint64 prev_fp = *(pte_t *)(curr_fp - 0x10); // 上一栈帧指针
+
+        printf("%p\n", ret);  // 打印返回地址
+        curr_fp = prev_fp;    // 移动到上一栈帧
+    }
+}
+

@@ -107,11 +107,25 @@ allocproc(void)
 found:
   p->pid = allocpid();
 
-  // Allocate a trapframe page.
+    // 1. Allocate trapframe page first
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     release(&p->lock);
     return 0;
   }
+
+    // 2. Allocate alarmframe page
+  if((p->alarmframe = (struct trapframe *)kalloc()) == 0){
+    kfree((void*)p->trapframe); // 先释放 trapframe 避免内存泄漏
+    release(&p->lock);
+    return 0;
+  }
+
+  // Zero initializes the alarm related fields
+  p->alarm_period = 0;
+  p->alarm_handler = 0;
+  p->ticks_since_last_alarm = 0;
+  p->inalarm = 0;
+  
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
@@ -136,8 +150,13 @@ found:
 static void
 freeproc(struct proc *p)
 {
-  if(p->trapframe)
-    kfree((void*)p->trapframe);
+  if(p->trapframe){
+    kfree((void*)p->trapframe);}
+      // 释放 alarmframe 的物理内存
+    if(p->alarmframe){
+        kfree((void*)p->alarmframe);
+  	p->alarmframe = 0;
+  }
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);

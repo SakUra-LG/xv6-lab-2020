@@ -9,6 +9,9 @@ struct sleeplock;
 struct stat;
 struct superblock;
 
+uint64 sys_sigalarm(void);
+uint64 sys_sigreturn(void);
+
 // bio.c
 void            binit(void);
 struct buf*     bread(uint, uint);
@@ -80,6 +83,9 @@ int             pipewrite(struct pipe*, uint64, int);
 void            printf(char*, ...);
 void            panic(char*) __attribute__((noreturn));
 void            printfinit(void);
+
+void 		backtrace(void);
+
 
 // proc.c
 int             cpuid(void);

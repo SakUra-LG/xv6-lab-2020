@@ -55,6 +55,9 @@ sys_sbrk(void)
 uint64
 sys_sleep(void)
 {
+
+  backtrace();
+
   int n;
   uint ticks0;
 
@@ -95,3 +98,33 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_sigalarm(void)
+{
+  struct proc *p = myproc();
+  int period;
+  if(argint(0, &period) < 0)
+    return -1;
+  uint64 handler;
+  if(argaddr(1, &handler) < 0)
+    return -1;
+
+  p->alarm_period = period;
+  p->alarm_handler = (void (*)()) handler;
+  p->ticks_since_last_alarm = 0;
+  return 0;
+}
+
+uint64
+sys_sigreturn(void)
+{
+  struct proc *p = myproc();
+  if(p->inalarm){
+    p->inalarm = 0;
+    *p->trapframe = *p->alarmframe; // 恢复所有寄存器
+    p->ticks_since_last_alarm = 0;
+  }
+  return 0;
+}
+
