@@ -36,10 +36,13 @@ main()
     sockinit();
 #endif    
     userinit();      // first user process
+#ifdef KCSAN
+    kcsaninit();
+#endif
     __sync_synchronize();
     started = 1;
   } else {
-    while(started == 0)
+    while(lockfree_read4((int *) &started) == 0)
       ;
     __sync_synchronize();
     printf("hart %d starting\n", cpuid());
