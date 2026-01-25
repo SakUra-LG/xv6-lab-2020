@@ -1,5 +1,3 @@
-#include "spinlock.h"
-
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -105,9 +103,4 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-  
-  pagetable_t kpagetable;      // 每个进程专属内核页表
-  
-  uint64 tracemask;            // the sys calls this proc is tracing
-
 };
